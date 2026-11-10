@@ -20,7 +20,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           PROJECT_DIR="$(find "$GITHUB_WORKSPACE" -type f \\( -name settings.gradle -o -name settings.gradle.kts \\) -not -path '*/.gradle/*' -printf '%h\\n' | head -n 1 || true)"
 
           if [ -z "$PROJECT_DIR" ]; then
@@ -50,9 +49,12 @@ jobs:
           distribution: 'temurin'
 
       - name: Instalar Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.13'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.13-bin.zip -o "$RUNNER_TEMP/gradle-8.13-bin.zip"
+          unzip -q "$RUNNER_TEMP/gradle-8.13-bin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
 
       - name: Generar Gradle Wrapper si hace falta
         shell: bash
