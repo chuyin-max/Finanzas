@@ -5,6 +5,9 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -13,26 +16,67 @@ jobs:
       - name: Descargar codigo
         uses: actions/checkout@v4
 
+      - name: Localizar o extraer proyecto Android
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT_DIR="$(find "$GITHUB_WORKSPACE" -type f \\( -name settings.gradle -o -name settings.gradle.kts \\) -not -path '*/.gradle/*' -printf '%h\\n' | head -n 1 || true)"
+
+          if [ -z "$PROJECT_DIR" ]; then
+            ARCHIVE="$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -print -quit)"
+            if [ -z "$ARCHIVE" ]; then
+              echo "No se encontro settings.gradle(.kts) ni un ZIP del proyecto."
+              exit 1
+            fi
+            mkdir -p "$RUNNER_TEMP/finanzasp-android"
+            unzip -q "$ARCHIVE" -d "$RUNNER_TEMP/finanzasp-android"
+            PROJECT_DIR="$(find "$RUNNER_TEMP/finanzasp-android" -type f \\( -name settings.gradle -o -name settings.gradle.kts \\) -not -path '*/.gradle/*' -printf '%h\\n' | head -n 1 || true)"
+          fi
+
+          if [ -z "$PROJECT_DIR" ] || [ ! -d "$PROJECT_DIR/app" ]; then
+            echo "No se encontro la raiz Android (se esperaba settings.gradle y la carpeta app/)."
+            find "$GITHUB_WORKSPACE" "$RUNNER_TEMP/finanzasp-android" -maxdepth 4 -type f 2>/dev/null | head -n 100 || true
+            exit 1
+          fi
+
+          echo "Proyecto Android encontrado en: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
       - name: Configurar JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
 
-      - name: Generar permisos para Gradle
+      - name: Instalar Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Generar Gradle Wrapper si hace falta
+        shell: bash
         run: |
-          if [ ! -f "gradlew" ]; then
-            gradle wrapper --gradle-version 8.13
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          if [ ! -f gradlew ] || [ ! -f gradle/wrapper/gradle-wrapper.properties ] || [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            gradle wrapper --gradle-version 8.13 --distribution-type bin
           fi
           chmod +x gradlew
+          test -f gradle/wrapper/gradle-wrapper.properties
+          test -f gradle/wrapper/gradle-wrapper.jar
 
-      - name: Compilar APK Debug
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Verificar y compilar APK Debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          ./gradlew --no-daemon clean assembleDebug --stacktrace
 
       - name: Subir APK para descargar
         uses: actions/upload-artifact@v4
         with:
           name: FinanzasPatrimonio-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
